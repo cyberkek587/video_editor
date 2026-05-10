@@ -36,15 +36,18 @@ class VideoRenderer:
                 local_end = overlap_end - f_start
                 output_file = os.path.join(self.output_dir, f"seg_{virtual_index:04d}_{i:03d}_{segment_type}.mp4")
                 if segment_type == "KEEP":
-                    # To prevent crashes in H.265/HEVC, we must cut at keyframes
-                    # We use -ss BEFORE -i for fast seeking and then snap to the keyframe
+                    # LOSSLESS CUTTING: 
+                    # To avoid "broken" files, we MUST start at a keyframe.
+                    # We use -ss BEFORE -i for fast seeking and then snap to the keyframe.
                     # Note: This may shift the cut by a fraction of a second
                     cmd = [
                         "ffmpeg", "-y",
                         "-ss", str(local_start),
-                        "-to", str(local_end),
                         "-i", file["path"],
+                        "-to", str(local_end - local_start),
                         "-c", "copy",
+                        "-avoid_negative_ts", "make_zero",
+                        "-map", "0:v", "-map", "0:a",
                         output_file
                     ]
                 else: # GAP
