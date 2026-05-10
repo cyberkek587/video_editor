@@ -59,6 +59,10 @@ class VideoRenderer:
                     # Match the codec of the original file
                     codec = self.get_codec(file["path"])
                     
+                    # Use optimized settings based on user's converter config
+                    # We use 'ultrafast' preset for GAP segments to keep rendering speed high
+                    preset = "ultrafast" if codec == "libx265" else "ultrafast"
+                    
                     # Create a silent audio track that matches the resulting video length
                     cmd = [
                         "ffmpeg", "-y",
@@ -70,7 +74,13 @@ class VideoRenderer:
                         "-map", "0:v",
                         "-map", "1:a",
                         "-c:v", codec,
+                        "-preset", preset,
+                        "-crf", "28",
+                        "-pix_fmt", "yuv420p",
                         "-c:a", "aac",
+                        "-b:a", "192k",
+                        "-ac", "2",
+                        "-movflags", "+faststart",
                         "-shortest",
                         output_file
                     ]
