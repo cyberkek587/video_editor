@@ -423,7 +423,12 @@ class VideoEditorApp(QMainWindow):
                 subs = parse_srt(srt_path)
                 offset = file_info["offset"]
                 for s in subs:
-                    all_subs.append({'start': s.start.ordinal / 1000.0 + offset, 'end': s.end.ordinal / 1000.0 + offset, 'text': s.text.replace('\n', ' ')})
+                    # s is already a dict from parse_srt: {'start': float, 'end': float, 'text': str}
+                    all_subs.append({
+                        'start': s['start'] + offset, 
+                        'end': s['end'] + offset, 
+                        'text': s['text']
+                    })
         all_subs.sort(key=lambda x: x['start'])
         new_subs = []
         current_virtual_offset = 0.0
@@ -433,7 +438,11 @@ class VideoEditorApp(QMainWindow):
                 if sub['start'] < k_end and sub['end'] > k_start:
                     actual_start = max(sub['start'], k_start)
                     actual_end = min(sub['end'], k_end)
-                    new_subs.append({'start': current_virtual_offset + (actual_start - k_start), 'end': current_virtual_offset + (actual_end - k_start), 'text': sub['text']})
+                    new_subs.append({
+                        'start': current_virtual_offset + (actual_start - k_start), 
+                        'end': current_virtual_offset + (actual_end - k_start), 
+                        'text': sub['text']
+                    })
             current_virtual_offset += (k_end - k_start)
         def format_srt_time(seconds):
             hrs = int(seconds // 3600)
