@@ -3,14 +3,21 @@ import os
 import math
 
 class VideoRenderer:
-    def __init__(self, files_info, output_dir="temp_segments"):
-        """
-        files_info: List of {"path": str, "duration": float, "offset": float}
-        """
-        self.files_info = files_info
-        self.output_dir = output_dir
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+    def get_codec(self, file_path):
+        """Detects if the file is h264 or h265."""
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            codec = result.stdout.strip()
+            if "hevc" in codec:
+                return "libx265"
+            return "libx264"
+        except Exception:
+            return "libx264" # Fallback
 
     def render_virtual_segment(self, virtual_index, v_start, v_end, segment_type):
         """
@@ -49,6 +56,9 @@ class VideoRenderer:
                     speed_factor = max(1, math.floor(v_duration / 10.0))
                     filter_complex = f"select='not(mod(n,{speed_factor}))',setpts={1.0/speed_factor}*PTS"
                     
+                    # Match the codec of the original file
+                    codec = self.get_codec(file["path"])
+                    
                     # Create a silent audio track that matches the resulting video length
                     cmd = [
                         "ffmpeg", "-y",
@@ -59,7 +69,7 @@ class VideoRenderer:
                         "-vf", filter_complex,
                         "-map", "0:v",
                         "-map", "1:a",
-                        "-c:v", "libx264",
+                        "-c:v", codec,
                         "-c:a", "aac",
                         "-shortest",
                         output_file

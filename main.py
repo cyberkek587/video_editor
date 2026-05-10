@@ -445,6 +445,7 @@ class VideoEditorApp(QMainWindow):
             "mpv",
             f"--wid={wid}",
             f"--input-ipc-server={self.socket_path}",
+            "--keep-open",
             video_path
         ]
         self.mpv_process = QProcess(self)

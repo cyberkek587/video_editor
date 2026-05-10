@@ -15,7 +15,7 @@ class MPVController:
                 break
             time.sleep(0.2)
         else:
-            print(f"Socket {self.socket_path} not found.")
+            # Silently return None instead of printing to avoid console spam
             return None
 
         try:
@@ -23,12 +23,10 @@ class MPVController:
                 client.connect(self.socket_path)
                 msg = json.dumps({"command": command}) + '\n'
                 client.sendall(msg.encode('utf-8'))
-                
-                # We might want to read the response if needed
-                # For basic seeking, we might not care immediately
-                # response = client.recv(4096)
-                # return json.loads(response.decode('utf-8'))
                 return True
+        except (ConnectionRefusedError, socket.error):
+            # Silently return None on connection errors
+            return None
         except Exception as e:
             print(f"Error communicating with mpv: {e}")
             return None
@@ -59,6 +57,9 @@ class MPVController:
                         data = json.loads(line)
                         return data.get('data')
                 return None
+        except (ConnectionRefusedError, socket.error):
+            # Silently return None on connection errors
+            return None
         except Exception as e:
             print(f"Error getting property from mpv: {e}")
             return None
