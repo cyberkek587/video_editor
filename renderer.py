@@ -3,6 +3,15 @@ import os
 import math
 
 class VideoRenderer:
+    def __init__(self, files_info, output_dir="temp_segments"):
+        """
+        files_info: List of {"path": str, "duration": float, "offset": float}
+        """
+        self.files_info = files_info
+        self.output_dir = output_dir
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
     def get_codec(self, file_path):
         """Detects if the file is h264 or h265."""
         cmd = [
