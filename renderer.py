@@ -49,17 +49,24 @@ class VideoRenderer:
                     speed_factor = max(1, math.floor(v_duration / 10.0))
                     filter_complex = f"select='not(mod(n,{speed_factor}))',setpts={1.0/speed_factor}*PTS"
                     
+                    # Create a silent audio track that matches the resulting video length
                     cmd = [
                         "ffmpeg", "-y",
                         "-ss", str(local_start),
                         "-to", str(local_end),
                         "-i", file["path"],
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
                         "-vf", filter_complex,
-                        "-an", 
+                        "-map", "0:v",
+                        "-map", "1:a",
+                        "-c:v", "libx264",
+                        "-c:a", "aac",
+                        "-shortest",
                         output_file
                     ]
                 
                 try:
+                    # Use a slightly higher probe size for the rendering if needed
                     subprocess.run(cmd, check=True, capture_output=True)
                     results.append(output_file)
                 except subprocess.CalledProcessError as e:

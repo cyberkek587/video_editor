@@ -190,6 +190,7 @@ class VideoEditorApp(QMainWindow):
         self.segment_table = QTableWidget(0, 3)
         self.segment_table.setHorizontalHeaderLabels(["Type", "Start", "End"])
         self.segment_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.segment_table.itemDoubleClicked.connect(self.remove_segment)
         
         self.visual_timeline = VisualTimeline()
         self.visual_timeline.timeClicked.connect(self.seek_virtual_time)
@@ -299,6 +300,27 @@ class VideoEditorApp(QMainWindow):
 
     def clear_segments(self):
         self.segments = []
+        self.refresh_segment_table()
+
+    def remove_segment(self, item):
+        row = item.row()
+        all_segs = self.calculate_all_segments()
+        seg_to_remove = all_segs[row]
+        
+        if seg_to_remove['type'] == "KEEP":
+            # Find the actual keep segment in self.segments list
+            for i, s in enumerate(self.segments):
+                if s['start'] == seg_to_remove['start'] and s['end'] == seg_to_remove['end']:
+                    self.segments.pop(i)
+                    break
+        else:
+            # GAPs are calculated on the fly. Removing a GAP means
+            # merging the adjacent KEEP zones.
+            # In our current logic, GAP is just space between KEEP.
+            # So we can't "remove" a GAP without moving a KEEP.
+            QMessageBox.information(self, "Info", "Gaps are automatic. To remove a gap, adjust the adjacent Keep segments.")
+            return
+
         self.refresh_segment_table()
 
     def refresh_segment_table(self):
