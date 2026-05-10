@@ -41,3 +41,24 @@ class MPVController:
 
     def resume(self):
         return self.send_command(["set_property", "pause", False])
+
+    def get_property(self, property_name):
+        if not os.path.exists(self.socket_path):
+            return None
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(self.socket_path)
+                msg = json.dumps({"command": ["get_property", property_name]}) + '\n'
+                client.sendall(msg.encode('utf-8'))
+                response = client.recv(4096)
+                data = json.loads(response.decode('utf-8'))
+                return data.get('data')
+        except Exception as e:
+            print(f"Error getting property from mpv: {e}")
+            return None
+
+    def get_time(self):
+        return self.get_property("time-pos")
+
+    def get_duration(self):
+        return self.get_property("duration")
