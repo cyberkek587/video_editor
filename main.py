@@ -12,6 +12,7 @@ from srt_parser import parse_srt
 from mpv_ipc import MPVController
 from renderer import VideoRenderer
 from timeline_widget import VisualTimeline
+import json as json_lib
 
 class TimelineManager:
     def __init__(self):
@@ -151,8 +152,8 @@ class VideoEditorApp(QMainWindow):
         self.video_container.setStyleSheet("background-color: black;")
         right_layout.addWidget(self.video_container)
 
-        top_layout.addWidget(left_panel, 1)
-        top_layout.addWidget(right_panel, 3)
+        top_layout.addWidget(left_panel, 2) # Expanded subtitle block
+        top_layout.addWidget(right_panel, 4)
         
         # Bottom Panel (Controls)
         bottom_panel = QWidget()
@@ -175,6 +176,10 @@ class VideoEditorApp(QMainWindow):
         self.add_keep_btn.clicked.connect(self.add_keep_segment)
         self.clear_btn = QPushButton("Clear All")
         self.clear_btn.clicked.connect(self.clear_segments)
+        self.save_segments_btn = QPushButton("Save Project")
+        self.save_segments_btn.clicked.connect(self.save_segments_to_file)
+        self.load_segments_btn = QPushButton("Load Project")
+        self.load_segments_btn.clicked.connect(self.load_segments_from_file)
         self.export_btn = QPushButton("Export")
         self.export_btn.clicked.connect(self.export_video)
         
@@ -182,6 +187,8 @@ class VideoEditorApp(QMainWindow):
         controls_layout.addWidget(self.set_end_btn)
         controls_layout.addWidget(self.add_keep_btn)
         controls_layout.addWidget(self.clear_btn)
+        controls_layout.addWidget(self.save_segments_btn)
+        controls_layout.addWidget(self.load_segments_btn)
         controls_layout.addStretch()
         controls_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(controls_layout)
@@ -285,7 +292,11 @@ class VideoEditorApp(QMainWindow):
         v_time = self.get_current_virtual_time()
         if v_time is not None:
             self.temp_end = v_time
-            self.update_status()
+            # Automatically submit the segment if we have a start time
+            if self.temp_start is not None:
+                self.add_keep_segment()
+            else:
+                self.update_status()
 
     def add_keep_segment(self):
         if self.temp_start is not None and self.temp_end is not None:
@@ -301,6 +312,30 @@ class VideoEditorApp(QMainWindow):
     def clear_segments(self):
         self.segments = []
         self.refresh_segment_table()
+        self.save_segments_to_file()
+
+    def load_segments_from_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Segments", "", "Segments Files (*.txt)")
+        if file_path:
+            try:
+                with open(file_path, "r") as f:
+                    data = json_lib.load(f)
+                    self.segments = data
+                    self.segments.sort(key=lambda x: x['start'])
+                    self.refresh_segment_table()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load segments: {e}")
+
+    def save_segments_to_file(self):
+        if not self.segments:
+            return
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Segments", "segments.txt", "Segments Files (*.txt)")
+        if file_path:
+            try:
+                with open(file_path, "w") as f:
+                    json_lib.dump(self.segments, f)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save segments: {e}")
 
     def remove_segment(self, item):
         row = item.row()
