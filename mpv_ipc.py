@@ -1,7 +1,7 @@
 import socket
 import json
 import os
-
+import subprocess
 import time
 
 class MPVController:
@@ -62,3 +62,16 @@ class MPVController:
 
     def get_duration(self):
         return self.get_property("duration")
+
+    def get_duration_of_file(self, file_path):
+        """Uses ffprobe to get duration of a file without opening it in mpv."""
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return float(result.stdout.strip())
+        except Exception as e:
+            print(f"Error getting duration for {file_path}: {e}")
+            return None

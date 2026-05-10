@@ -2,13 +2,95 @@ import sys
 import subprocess
 import os
 import json
+import glob
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, 
-                             QFileDialog, QLabel, QTableWidget, QTableWidgetItem, QHeaderView)
-from PyQt6.QtCore import Qt, QProcess, QTimer
+                             QFileDialog, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
+                             QProgressBar, QMessageBox)
+from PyQt6.QtCore import Qt, QProcess, QTimer, QThread, pyqtSignal
 from srt_parser import parse_srt
 from mpv_ipc import MPVController
 from renderer import VideoRenderer
+
+class TimelineManager:
+    def __init__(self):
+        self.files = [] # List of {"path": str, "duration": float, "offset": float}
+        self.total_duration = 0.0
+
+    def load_folder(self, folder_path, mpv_controller):
+        extensions = ('*.MP4', '*.mp4', '*.MOV', '*.mov')
+        files_found = []
+        for ext in extensions:
+            files_found.extend(glob.glob(os.path.join(folder_path, ext)))
+        
+        # DJI files are named DJI_YYYYMMDDHHMMSS_... so alphabetical sort = chronological sort
+        files_found.sort()
+        
+        self.files = []
+        cumulative_offset = 0.0
+        for f in files_found:
+            duration = mpv_controller.get_duration_of_file(f)
+            if duration:
+                self.files.append({
+                    "path": f,
+                    "duration": duration,
+                    "offset": cumulative_offset
+                })
+                cumulative_offset += duration
+        
+        self.total_duration = cumulative_offset
+        return self.files
+
+    def virtual_to_local(self, virtual_time):
+        for i, file in enumerate(self.files):
+            if file["offset"] <= virtual_time < (file["offset"] + file["duration"]):
+                return i, virtual_time - file["offset"]
+        if not self.files: return 0, 0
+        last = self.files[-1]
+        return len(self.files)-1, last["duration"]
+
+    def get_file_at_time(self, virtual_time):
+        for i, file in enumerate(self.files):
+            if file["offset"] <= virtual_time < (file["offset"] + file["duration"]):
+                return i
+        return -1
+
+class RenderThread(QThread):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, files_info, all_segments, save_path):
+        super().__init__()
+        self.files_info = files_info
+        self.all_segments = all_segments
+        self.save_path = save_path
+
+    def run(self):
+        try:
+            renderer = VideoRenderer(self.files_info)
+            rendered_files = []
+            total = len(self.all_segments)
+            
+            for i, seg in enumerate(self.all_segments):
+                self.progress.emit(int((i / total) * 100), f"Rendering Segment {i+1}/{total} ({seg['type']})...")
+                # Use the correct method name: render_virtual_segment
+                files = renderer.render_virtual_segment(i, seg['start'], seg['end'], seg['type'])
+                if files:
+                    rendered_files.extend(files)
+            
+            if rendered_files:
+                self.progress.emit(95, "Assembling final video...")
+                if renderer.assemble_final(rendered_files, self.save_path):
+                    renderer.cleanup()
+                    self.finished.emit(True, "Export Successful!")
+                else:
+                    self.finished.emit(False, "Assembly failed.")
+            else:
+                self.finished.emit(False, "No segments to render.")
+                
+            renderer.cleanup()
+        except Exception as e:
+            self.finished.emit(False, f"Export error: {str(e)}")
 
 class VideoEditorApp(QMainWindow):
     def __init__(self):
@@ -19,8 +101,10 @@ class VideoEditorApp(QMainWindow):
         self.socket_path = "/tmp/mpv-socket"
         self.mpv_process = None
         self.mpv_controller = MPVController(self.socket_path)
-        self.current_video = None
-        self.current_srt = None
+        
+        self.timeline = TimelineManager()
+        self.current_file_index = -1
+        self.current_srt_files = []
         
         self.segments = [] # List of {"type": "KEEP", "start": float, "end": float}
         self.temp_start = None
@@ -41,12 +125,12 @@ class VideoEditorApp(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         
-        self.load_video_btn = QPushButton("Load Video")
-        self.load_video_btn.clicked.connect(self.open_video)
-        left_layout.addWidget(self.load_video_btn)
+        self.load_folder_btn = QPushButton("Load Folder")
+        self.load_folder_btn.clicked.connect(self.open_folder)
+        left_layout.addWidget(self.load_folder_btn)
 
-        self.load_srt_btn = QPushButton("Load Subtitles")
-        self.load_srt_btn.clicked.connect(self.open_srt)
+        self.load_srt_btn = QPushButton("Load All Subtitles")
+        self.load_srt_btn.clicked.connect(self.load_all_srts)
         left_layout.addWidget(self.load_srt_btn)
 
         self.subtitle_list = QListWidget()
@@ -69,6 +153,10 @@ class VideoEditorApp(QMainWindow):
         # Status Bar / Current Position
         self.status_label = QLabel("Current Position: 00:00:00.00 | Start: -- | End: --")
         bottom_layout.addWidget(self.status_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        bottom_layout.addWidget(self.progress_bar)
 
         controls_layout = QHBoxLayout()
         self.set_start_btn = QPushButton("Set Start ([)")
@@ -104,21 +192,40 @@ class VideoEditorApp(QMainWindow):
         main_layout.addWidget(left_panel, 1)
         main_layout.addWidget(right_panel, 3)
 
-    def open_video(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Video Files (*.mp4 *.mov *.mkv)")
-        if file_path:
-            self.current_video = file_path
-            self.start_mpv(file_path)
+    def open_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Video Folder")
+        if folder_path:
+            files = self.timeline.load_folder(folder_path, self.mpv_controller)
+            if not files:
+                QMessageBox.warning(self, "Error", "No compatible video files found in folder.")
+                return
+            
+            self.start_mpv(files[0]["path"])
+            self.current_file_index = 0
+            self.status_label.setText(f"Loaded {len(files)} files. Total Duration: {self.format_time(self.timeline.total_duration)}")
 
-    def open_srt(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Subtitles", "", "SRT Files (*.srt)")
-        if file_path:
-            self.current_srt = file_path
-            subs = parse_srt(file_path)
-            self.populate_subtitles(subs)
-            # Tell mpv to load subtitles too
-            if self.mpv_process:
-                self.mpv_controller.send_command(["sub-add", file_path])
+    def load_all_srts(self):
+        if not self.timeline.files:
+            QMessageBox.warning(self, "Error", "Please load a video folder first.")
+            return
+            
+        folder_path = os.path.dirname(self.timeline.files[0]["path"])
+        all_subs = []
+        
+        for i, file_info in enumerate(self.timeline.files):
+            base_name = os.path.splitext(file_info["path"])[0]
+            srt_path = base_name + ".srt"
+            if os.path.exists(srt_path):
+                subs = parse_srt(srt_path)
+                offset = file_info["offset"]
+                for s in subs:
+                    s['start'] += offset
+                    s['end'] += offset
+                all_subs.extend(subs)
+        
+        all_subs.sort(key=lambda x: x['start'])
+        self.populate_subtitles(all_subs)
+        self.current_srt_files = [f + ".srt" for f in [os.path.splitext(fi["path"])[0] for fi in self.timeline.files] if os.path.exists(f + ".srt")]
 
     def populate_subtitles(self, subs):
         self.subtitle_list.clear()
@@ -128,21 +235,45 @@ class VideoEditorApp(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, sub['start'])
             self.subtitle_list.addItem(item)
 
+    def on_subtitle_clicked(self, item):
+        v_time = item.data(Qt.ItemDataRole.UserRole)
+        self.seek_virtual_time(v_time)
+
+    def seek_virtual_time(self, v_time):
+        idx = self.timeline.get_file_at_time(v_time)
+        if idx == -1:
+            return
+        
+        if idx != self.current_file_index:
+            self.current_file_index = idx
+            self.start_mpv(self.timeline.files[idx]["path"])
+        
+        local_time = v_time - self.timeline.files[idx]["offset"]
+        self.mpv_controller.seek(local_time)
+
+    def get_current_virtual_time(self):
+        curr_local_time = self.mpv_controller.get_time()
+        if curr_local_time is None or self.current_file_index == -1:
+            return None
+        file_info = self.timeline.files[self.current_file_index]
+        return file_info["offset"] + curr_local_time
+
     def format_time(self, seconds):
-        mins, secs = divmod(seconds, 60)
+        if seconds is None: return "00:00:00.00"
+        mins, secs = divmod(max(0, seconds), 60)
         hrs, mins = divmod(mins, 60)
         return f"{int(hrs):02}:{int(mins):02}:{secs:05.2f}"
 
     def set_start(self):
-        curr_time = self.mpv_controller.get_time()
-        if curr_time is not None:
-            self.temp_start = curr_time
+        v_time = self.get_current_virtual_time()
+        if v_time is not None:
+            self.temp_start = v_time
             self.update_status()
 
     def set_end(self):
-        curr_time = self.mpv_controller.get_time()
-        if curr_time is not None:
-            self.temp_end = curr_time
+        v_time = self.get_current_virtual_time()
+        if v_time is not None:
+            self.temp_end = v_time
             self.update_status()
 
     def add_keep_segment(self):
@@ -199,65 +330,60 @@ class VideoEditorApp(QMainWindow):
         self.status_label.setText(f"Current Position: {curr_str} | Start: {start_str} | End: {end_str}")
 
     def export_video(self):
-        if not self.current_video:
-            print("No video loaded")
+        if not self.timeline.files:
+            QMessageBox.warning(self, "Error", "No video loaded")
             return
 
         save_path, _ = QFileDialog.getSaveFileName(self, "Save Exported Video", "output.mp4", "MP4 Video (*.mp4)")
         if not save_path:
             return
 
-        # Calculate total duration to close the final gap
-        total_duration = self.mpv_controller.get_duration()
-        if total_duration is None:
-            print("Could not determine video duration")
+        total_duration = self.timeline.total_duration
+        if total_duration <= 0:
+            QMessageBox.critical(self, "Error", "Could not determine video duration")
             return
 
-        # Get all segments
         all_segments = self.calculate_all_segments()
-        
-        # Add final gap if the last segment doesn't reach the end
         if all_segments:
             last_end = all_segments[-1]['end']
             if last_end < total_duration:
                 all_segments.append({"type": "GAP", "start": last_end, "end": total_duration})
         elif total_duration > 0:
-            # No KEEP segments, the whole thing is one GAP
             all_segments.append({"type": "GAP", "start": 0, "end": total_duration})
 
+        # Dry Run / Confirmation
+        summary = f"Total segments to render: {len(all_segments)}\n"
+        keeps = sum(1 for s in all_segments if s['type'] == 'KEEP')
+        gaps = sum(1 for s in all_segments if s['type'] == 'GAP')
+        summary += f"KEEP: {keeps}, GAP: {gaps}\n\nProceed with export?"
+        
+        reply = QMessageBox.question(self, "Confirm Export", summary, 
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.No:
+            return
+
         self.export_btn.setEnabled(False)
-        self.export_btn.setText("Rendering...")
-        QApplication.processEvents()
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
 
-        try:
-            renderer = VideoRenderer(self.current_video)
-            rendered_files = []
-            
-            for i, seg in enumerate(all_segments):
-                self.status_label.setText(f"Rendering Segment {i+1}/{len(all_segments)} ({seg['type']})...")
-                QApplication.processEvents()
-                
-                file = renderer.render_segment(i, seg['start'], seg['end'], seg['type'])
-                if file:
-                    rendered_files.append(file)
+        self.render_thread = RenderThread(self.timeline.files, all_segments, save_path)
+        self.render_thread.progress.connect(self.update_render_progress)
+        self.render_thread.finished.connect(self.on_render_finished)
+        self.render_thread.start()
 
-            if rendered_files:
-                self.status_label.setText("Assembling final video...")
-                QApplication.processEvents()
-                if renderer.assemble_final(rendered_files, save_path):
-                    self.status_label.setText("Export Successful!")
-                else:
-                    self.status_label.setText("Assembly failed.")
-            else:
-                self.status_label.setText("No segments to render.")
+    def update_render_progress(self, value, text):
+        self.progress_bar.setValue(value)
+        self.status_label.setText(text)
 
-            renderer.cleanup()
-        except Exception as e:
-            print(f"Export error: {e}")
-            self.status_label.setText(f"Error: {e}")
-        finally:
-            self.export_btn.setEnabled(True)
-            self.export_btn.setText("Export")
+    def on_render_finished(self, success, message):
+        self.export_btn.setEnabled(True)
+        self.progress_bar.setVisible(False)
+        self.status_label.setText(message)
+        if success:
+            QMessageBox.information(self, "Export", message)
+        else:
+            QMessageBox.critical(self, "Export Failed", message)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_BracketLeft:
