@@ -1,6 +1,5 @@
 import glob
 import os
-import mpv_ipc # Temporary import for type check or just use the class
 from src.video_editor.core.mpv_client import MPVController
 
 class TimelineManager:
