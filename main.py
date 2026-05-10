@@ -1,5 +1,4 @@
 import sys
-import subprocess
 import os
 import json
 import glob
@@ -8,55 +7,14 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
                              QProgressBar, QMessageBox, QSplitter, QCheckBox)
 from PyQt6.QtCore import Qt, QProcess, QTimer, QThread, pyqtSignal
-from srt_parser import parse_srt
-from mpv_ipc import MPVController
-from renderer import VideoRenderer
-from timeline_widget import VisualTimeline
+
+from src.video_editor.core.srt_utils import parse_srt
+from src.video_editor.core.mpv_client import MPVController
+from src.video_editor.core.renderer import VideoRenderer
+from src.video_editor.core.timeline import TimelineManager
+from src.video_editor.ui.widgets import VisualTimeline
 import json as json_lib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-class TimelineManager:
-    def __init__(self):
-        self.files = [] # List of {"path": str, "duration": float, "offset": float}
-        self.total_duration = 0.0
-
-    def load_folder(self, folder_path, mpv_controller):
-        extensions = ('*.MP4', '*.mp4', '*.MOV', '*.mov')
-        files_found = []
-        for ext in extensions:
-            files_found.extend(glob.glob(os.path.join(folder_path, ext)))
-        
-        # DJI files are named DJI_YYYYMMDDHHMMSS_... so alphabetical sort = chronological sort
-        files_found.sort()
-        
-        self.files = []
-        cumulative_offset = 0.0
-        for f in files_found:
-            duration = mpv_controller.get_duration_of_file(f)
-            if duration:
-                self.files.append({
-                    "path": f,
-                    "duration": duration,
-                    "offset": cumulative_offset
-                })
-                cumulative_offset += duration
-        
-        self.total_duration = cumulative_offset
-        return self.files
-
-    def virtual_to_local(self, virtual_time):
-        for i, file in enumerate(self.files):
-            if file["offset"] <= virtual_time < (file["offset"] + file["duration"]):
-                return i, virtual_time - file["offset"]
-        if not self.files: return 0, 0
-        last = self.files[-1]
-        return len(self.files)-1, last["duration"]
-
-    def get_file_at_time(self, virtual_time):
-        for i, file in enumerate(self.files):
-            if file["offset"] <= virtual_time < (file["offset"] + file["duration"]):
-                return i
-        return -1
 
 class RenderThread(QThread):
     progress = pyqtSignal(int, str)
@@ -74,17 +32,13 @@ class RenderThread(QThread):
             rendered_files = []
             total = len(self.all_segments)
             
-            # Use a ThreadPoolExecutor to render multiple segments in parallel
-            # This will utilize more CPU cores
             with ThreadPoolExecutor() as executor:
-                # Create a map of future to segment index
                 future_to_seg = {
                     executor.submit(renderer.render_virtual_segment, i, seg['start'], seg['end'], seg['type']): i 
                     for i, seg in enumerate(self.all_segments)
                 }
                 
                 completed_count = 0
-                # Store results to maintain original order
                 results_map = {}
 
                 for future in as_completed(future_to_seg):
@@ -94,11 +48,9 @@ class RenderThread(QThread):
                         results_map[seg_idx] = files
                     
                     completed_count += 1
-                    # Progress based on completed tasks
                     seg_type = self.all_segments[seg_idx]['type']
                     self.progress.emit(int((completed_count / total) * 100), f"Rendering Segment {seg_idx+1}/{total} ({seg_type})...")
 
-            # Reassemble in the correct order
             for i in range(total):
                 if i in results_map:
                     rendered_files.extend(results_map[i])
@@ -131,7 +83,7 @@ class VideoEditorApp(QMainWindow):
         self.current_file_index = -1
         self.current_srt_files = []
         
-        self.segments = [] # List of {"type": "KEEP", "start": float, "end": float}
+        self.segments = [] 
         self.temp_start = None
         self.temp_end = None
 
@@ -144,17 +96,12 @@ class VideoEditorApp(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # Main Vertical Layout for the whole window
         main_layout = QVBoxLayout(central_widget)
 
-        # Top Section: Using QSplitter for dynamic resizing
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Left Panel: Subtitle Navigator
         self.left_panel = QWidget()
         left_layout = QVBoxLayout(self.left_panel)
-        
         self.load_folder_btn = QPushButton("Load Folder")
         self.load_folder_btn.clicked.connect(self.open_folder)
         left_layout.addWidget(self.load_folder_btn)
@@ -167,24 +114,19 @@ class VideoEditorApp(QMainWindow):
         self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
         left_layout.addWidget(self.subtitle_list)
 
-        # Right Panel: Preview
         self.right_panel = QWidget()
         right_layout = QVBoxLayout(self.right_panel)
-        
         self.video_container = QWidget()
         self.video_container.setStyleSheet("background-color: black;")
         right_layout.addWidget(self.video_container)
 
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.right_panel)
-        self.splitter.setStretchFactor(0, 5)
+        self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         
-        # Bottom Panel (Controls)
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
-        
-        # Status Bar / Current Position
         self.status_label = QLabel("Current Position: 00:00:00.00 | Start: -- | End: --")
         bottom_layout.addWidget(self.status_label)
 
@@ -207,7 +149,7 @@ class VideoEditorApp(QMainWindow):
         self.load_segments_btn.clicked.connect(self.load_segments_from_file)
         
         self.hide_preview_cb = QCheckBox("Hide Preview")
-        self.hide_preview_cb.setChecked(True) # Default hide as requested
+        self.hide_preview_cb.setChecked(True)
         self.hide_preview_cb.toggled.connect(self.toggle_preview)
         
         self.export_btn = QPushButton("Export")
@@ -224,7 +166,6 @@ class VideoEditorApp(QMainWindow):
         controls_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(controls_layout)
 
-        # Segment Table and Visual Timeline
         self.segment_table = QTableWidget(0, 3)
         self.segment_table.setHorizontalHeaderLabels(["Type", "Start", "End"])
         self.segment_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -236,7 +177,6 @@ class VideoEditorApp(QMainWindow):
         bottom_layout.addWidget(self.visual_timeline)
         bottom_layout.addWidget(self.segment_table)
 
-        # Assemble everything into the main vertical layout
         main_layout.addWidget(self.splitter)
         main_layout.addWidget(bottom_panel)
 
@@ -247,7 +187,6 @@ class VideoEditorApp(QMainWindow):
             if not files:
                 QMessageBox.warning(self, "Error", "No compatible video files found in folder.")
                 return
-            
             self.start_mpv(files[0]["path"])
             self.current_file_index = 0
             self.status_label.setText(f"Loaded {len(files)} files. Total Duration: {self.format_time(self.timeline.total_duration)}")
@@ -257,42 +196,32 @@ class VideoEditorApp(QMainWindow):
         if not self.timeline.files:
             QMessageBox.warning(self, "Error", "Please load a video folder first.")
             return
-            
         folder_path = os.path.dirname(self.timeline.files[0]["path"])
-        grouped_subs = [] # List of {"file_name": str, "subs": list}
-        
+        grouped_subs = []
         for i, file_info in enumerate(self.timeline.files):
             base_name = os.path.splitext(file_info["path"])[0]
             srt_path = base_name + ".srt"
             file_name = os.path.basename(file_info["path"])
-            
             if os.path.exists(srt_path):
                 subs = parse_srt(srt_path)
                 offset = file_info["offset"]
                 for s in subs:
                     s['start'] += offset
                     s['end'] += offset
-                
-                # Keep them sorted within the file
                 subs.sort(key=lambda x: x['start'])
                 grouped_subs.append({"file_name": file_name, "subs": subs})
-        
         self.populate_subtitles(grouped_subs)
         self.current_srt_files = [f + ".srt" for f in [os.path.splitext(fi["path"])[0] for fi in self.timeline.files] if os.path.exists(f + ".srt")]
 
     def populate_subtitles(self, grouped_subs):
         self.subtitle_list.clear()
         for group in grouped_subs:
-            # Add a header for the file
             header = QListWidgetItem(f"#{group['file_name']}")
             header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            
-            # Make header bold
             font = header.font()
             font.setBold(True)
             header.setFont(font)
             self.subtitle_list.addItem(header)
-            
             for sub in group['subs']:
                 timestamp = f"[{self.format_time(sub['start'])}]"
                 item = QListWidgetItem(f"{timestamp} {sub['text']}")
@@ -306,20 +235,16 @@ class VideoEditorApp(QMainWindow):
 
     def seek_virtual_time(self, v_time):
         idx = self.timeline.get_file_at_time(v_time)
-        if idx == -1:
-            return
-        
+        if idx == -1: return
         if idx != self.current_file_index:
             self.current_file_index = idx
             self.start_mpv(self.timeline.files[idx]["path"])
-        
         local_time = v_time - self.timeline.files[idx]["offset"]
         self.mpv_controller.seek(local_time)
 
     def get_current_virtual_time(self):
         curr_local_time = self.mpv_controller.get_time()
-        if curr_local_time is None or self.current_file_index == -1:
-            return None
+        if curr_local_time is None or self.current_file_index == -1: return None
         file_info = self.timeline.files[self.current_file_index]
         return file_info["offset"] + curr_local_time
 
@@ -339,7 +264,6 @@ class VideoEditorApp(QMainWindow):
         v_time = self.get_current_virtual_time()
         if v_time is not None:
             self.temp_end = v_time
-            # Automatically submit the segment if we have a start time
             if self.temp_start is not None:
                 self.add_keep_segment()
             else:
@@ -351,23 +275,17 @@ class VideoEditorApp(QMainWindow):
             end = max(self.temp_start, self.temp_end)
             self.segments.append({"type": "KEEP", "start": start, "end": end})
             self.segments.sort(key=lambda x: x['start'])
-            
-            # Merge overlapping or adjacent segments
             if len(self.segments) > 1:
                 merged = []
                 current_seg = self.segments[0].copy()
-                
                 for next_seg in self.segments[1:]:
                     if next_seg['start'] <= current_seg['end']:
-                        # Overlap found, merge by extending the end
                         current_seg['end'] = max(current_seg['end'], next_seg['end'])
                     else:
-                        # No overlap, push current and move to next
                         merged.append(current_seg)
                         current_seg = next_seg.copy()
                 merged.append(current_seg)
                 self.segments = merged
-            
             self.refresh_segment_table()
             self.temp_start = None
             self.temp_end = None
@@ -391,8 +309,7 @@ class VideoEditorApp(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to load segments: {e}")
 
     def save_segments_to_file(self):
-        if not self.segments:
-            return
+        if not self.segments: return
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Segments", "segments.txt", "Segments Files (*.txt)")
         if file_path:
             try:
@@ -405,26 +322,18 @@ class VideoEditorApp(QMainWindow):
         row = item.row()
         all_segs = self.calculate_all_segments()
         seg_to_remove = all_segs[row]
-        
         if seg_to_remove['type'] == "KEEP":
-            # Find the actual keep segment in self.segments list
             for i, s in enumerate(self.segments):
                 if s['start'] == seg_to_remove['start'] and s['end'] == seg_to_remove['end']:
                     self.segments.pop(i)
                     break
         else:
-            # GAPs are calculated on the fly. Removing a GAP means
-            # merging the adjacent KEEP zones.
-            # In our current logic, GAP is just space between KEEP.
-            # So we can't "remove" a GAP without moving a KEEP.
             QMessageBox.information(self, "Info", "Gaps are automatic. To remove a gap, adjust the adjacent Keep segments.")
             return
-
         self.refresh_segment_table()
 
     def refresh_segment_table(self):
         self.segment_table.setRowCount(0)
-        # We also need to calculate GAPs for the table display
         all_segments = self.calculate_all_segments()
         self.segment_table.setRowCount(len(all_segments))
         for i, seg in enumerate(all_segments):
@@ -434,25 +343,17 @@ class VideoEditorApp(QMainWindow):
             if seg['type'] == "GAP":
                 for j in range(3):
                     self.segment_table.item(i, j).setForeground(Qt.GlobalColor.gray)
-        
         self.visual_timeline.set_data(all_segments, self.timeline.total_duration, self.timeline.files)
 
     def calculate_all_segments(self):
-        if not self.segments:
-            return []
-        
-        # Assuming video starts at 0
+        if not self.segments: return []
         all_segs = []
         last_end = 0.0
-        
         for keep in self.segments:
             if keep['start'] > last_end:
                 all_segs.append({"type": "GAP", "start": last_end, "end": keep['start']})
             all_segs.append(keep)
             last_end = keep['end']
-        
-        # We don't necessarily know the total duration yet, 
-        # but for the purpose of the list, this is enough.
         return all_segs
 
     def update_status(self):
@@ -461,9 +362,7 @@ class VideoEditorApp(QMainWindow):
         start_str = self.format_time(self.temp_start) if self.temp_start is not None else "--"
         end_str = self.format_time(self.temp_end) if self.temp_end is not None else "--"
         self.status_label.setText(f"Current Position: {curr_str} | Start: {start_str} | End: {end_str}")
-        
         if curr_time is not None:
-            # Update visual timeline with current virtual time
             v_time = self.get_current_virtual_time()
             if v_time is not None:
                 self.visual_timeline.set_current_time(v_time)
@@ -483,36 +382,22 @@ class VideoEditorApp(QMainWindow):
         if not self.timeline.files:
             QMessageBox.warning(self, "Error", "No video loaded")
             return
-
         save_path, _ = QFileDialog.getSaveFileName(self, "Save Exported Video", "output.mp4", "MP4 Video (*.mp4)")
-        if not save_path:
-            return
-
-        # We ONLY export KEEP segments now (cut off GAPs)
+        if not save_path: return
         keep_segments = [s for s in self.segments]
-        
         if not keep_segments:
             QMessageBox.warning(self, "Error", "No keep segments defined.")
             return
-
-        # Dry Run / Confirmation
-        summary = f"Total segments to render: {len(keep_segments)}\n"
-        summary += f"KEEP: {len(keep_segments)}, GAP: 0 (Removed)\n\nProceed with export?"
-        
-        reply = QMessageBox.question(self, "Confirm Export", summary, 
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        if reply == QMessageBox.StandardButton.No:
-            return
-
+        summary = f"Total segments to render: {len(keep_segments)}\nKEEP: {len(keep_segments)}, GAP: 0 (Removed)\n\nProceed with export?"
+        reply = QMessageBox.question(self, "Confirm Export", summary, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.No: return
         self.export_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-
-        # Render only the KEEP segments
         self.render_thread = RenderThread(self.timeline.files, keep_segments, save_path)
         self.render_thread.progress.connect(self.update_render_progress)
         self.render_thread.finished.connect(lambda success, msg: self.on_render_finished(success, msg, save_path))
+        self.render_thread.start()
 
     def update_render_progress(self, value, text):
         self.progress_bar.setValue(value)
@@ -523,48 +408,13 @@ class VideoEditorApp(QMainWindow):
         self.progress_bar.setVisible(False)
         self.status_label.setText(message)
         if success:
-            # Generate subtitles for the new video
             self.generate_output_srt(save_path)
             QMessageBox.information(self, "Export", message)
         else:
             QMessageBox.critical(self, "Export Failed", message)
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_BracketLeft:
-            self.set_start()
-        elif event.key() == Qt.Key.Key_BracketRight:
-            self.set_end()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.add_keep_segment()
-        super().keyPressEvent(event)
-
-    def start_mpv(self, video_path):
-        if self.mpv_process:
-            self.mpv_process.terminate()
-        
-        # Embed mpv into the video_container widget
-        wid = int(self.video_container.winId())
-        
-        cmd = [
-            "mpv",
-            f"--wid={wid}",
-            f"--input-ipc-server={self.socket_path}",
-            "--keep-open",
-            video_path
-        ]
-        self.mpv_process = QProcess(self)
-        self.mpv_process.start("mpv", cmd[1:])
-
-    def toggle_preview(self, hide):
-        self.right_panel.setVisible(not hide)
-
     def generate_output_srt(self, video_path):
-        # Base path for the new srt file
         srt_output_path = os.path.splitext(video_path)[0] + ".srt"
-        
-        # 1. Get all subtitles loaded in the current session
-        # We need to access the original subtitles. Since we don't store the raw list
-        # we'll re-parse them using the same logic as load_all_srts
         all_subs = []
         for file_info in self.timeline.files:
             base_name = os.path.splitext(file_info["path"])[0]
@@ -573,60 +423,50 @@ class VideoEditorApp(QMainWindow):
                 subs = parse_srt(srt_path)
                 offset = file_info["offset"]
                 for s in subs:
-                    all_subs.append({
-                        'start': s.start.ordinal / 1000.0 + offset,
-                        'end': s.end.ordinal / 1000.0 + offset,
-                        'text': s.text.replace('\n', ' ')
-                    })
-        
+                    all_subs.append({'start': s.start.ordinal / 1000.0 + offset, 'end': s.end.ordinal / 1000.0 + offset, 'text': s.text.replace('\n', ' ')})
         all_subs.sort(key=lambda x: x['start'])
-        
-        # 2. Map original timestamps to new timeline
-        # New timeline only consists of KEEP segments concatenated
         new_subs = []
         current_virtual_offset = 0.0
-        
         for keep in self.segments:
-            k_start = keep['start']
-            k_end = keep['end']
-            duration = k_end - k_start
-            
-            # Find subtitles that overlap with this keep segment
+            k_start, k_end = keep['start'], keep['end']
             for sub in all_subs:
-                # Subtitle is inside or overlapping the keep segment
                 if sub['start'] < k_end and sub['end'] > k_start:
-                    # Clip the subtitle to the keep boundaries
                     actual_start = max(sub['start'], k_start)
                     actual_end = min(sub['end'], k_end)
-                    
-                    # Calculate new time relative to the output video
-                    new_start = current_virtual_offset + (actual_start - k_start)
-                    new_end = current_virtual_offset + (actual_end - k_start)
-                    
-                    new_subs.append({
-                        'start': new_start,
-                        'end': new_end,
-                        'text': sub['text']
-                    })
-            
-            current_virtual_offset += duration
-            
-        # 3. Write to SRT file
+                    new_subs.append({'start': current_virtual_offset + (actual_start - k_start), 'end': current_virtual_offset + (actual_end - k_start), 'text': sub['text']})
+            current_virtual_offset += (k_end - k_start)
         def format_srt_time(seconds):
             hrs = int(seconds // 3600)
             mins = int((seconds % 3600) // 60)
             secs = seconds % 60
             return f"{hrs:02}:{mins:02}:{secs:05.2f}".replace('.', ',')
-
         try:
             with open(srt_output_path, "w", encoding="utf-8") as f:
                 for i, sub in enumerate(new_subs, 1):
-                    f.write(f"{i}\n")
-                    f.write(f"{format_srt_time(sub['start'])} --> {format_srt_time(sub['end'])}\n")
-                    f.write(f"{sub['text']}\n\n")
-            print(f"Successfully generated subtitles at {srt_output_path}")
+                    f.write(f"{i}\n{format_srt_time(sub['start'])} --> {format_srt_time(sub['end'])}\n{sub['text']}\n\n")
         except Exception as e:
             print(f"Error writing SRT file: {e}")
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_BracketLeft: self.set_start()
+        elif event.key() == Qt.Key.Key_BracketRight: self.set_end()
+        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter): self.add_keep_segment()
+        super().keyPressEvent(event)
+
+    def start_mpv(self, video_path):
+        if self.mpv_process: self.mpv_process.terminate()
+        wid = int(self.video_container.winId())
+        cmd = ["mpv", f"--wid={wid}", f"--input-ipc-server={self.socket_path}", "--keep-open", video_path]
+        self.mpv_process = QProcess(self)
+        self.mpv_process.start("mpv", cmd[1:])
+
+    def toggle_preview(self, hide):
+        self.right_panel.setVisible(not hide)
+
+    def closeEvent(self, event):
+        if self.mpv_process: self.mpv_process.terminate()
+        if os.path.exists(self.socket_path): os.remove(self.socket_path)
+        super().closeEvent(event)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
