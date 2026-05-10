@@ -13,6 +13,7 @@ from mpv_ipc import MPVController
 from renderer import VideoRenderer
 from timeline_widget import VisualTimeline
 import json as json_lib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class TimelineManager:
     def __init__(self):
@@ -73,12 +74,34 @@ class RenderThread(QThread):
             rendered_files = []
             total = len(self.all_segments)
             
-            for i, seg in enumerate(self.all_segments):
-                self.progress.emit(int((i / total) * 100), f"Rendering Segment {i+1}/{total} ({seg['type']})...")
-                # Use the correct method name: render_virtual_segment
-                files = renderer.render_virtual_segment(i, seg['start'], seg['end'], seg['type'])
-                if files:
-                    rendered_files.extend(files)
+            # Use a ThreadPoolExecutor to render multiple segments in parallel
+            # This will utilize more CPU cores
+            with ThreadPoolExecutor() as executor:
+                # Create a map of future to segment index
+                future_to_seg = {
+                    executor.submit(renderer.render_virtual_segment, i, seg['start'], seg['end'], seg['type']): i 
+                    for i, seg in enumerate(self.all_segments)
+                }
+                
+                completed_count = 0
+                # Store results to maintain original order
+                results_map = {}
+
+                for future in as_completed(future_to_seg):
+                    seg_idx = future_to_seg[future]
+                    files = future.result()
+                    if files:
+                        results_map[seg_idx] = files
+                    
+                    completed_count += 1
+                    # Progress based on completed tasks
+                    seg_type = self.all_segments[seg_idx]['type']
+                    self.progress.emit(int((completed_count / total) * 100), f"Rendering Segment {seg_idx+1}/{total} ({seg_type})...")
+
+            # Reassemble in the correct order
+            for i in range(total):
+                if i in results_map:
+                    rendered_files.extend(results_map[i])
             
             if rendered_files:
                 self.progress.emit(95, "Assembling final video...")
