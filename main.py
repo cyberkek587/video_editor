@@ -304,6 +304,23 @@ class VideoEditorApp(QMainWindow):
             end = max(self.temp_start, self.temp_end)
             self.segments.append({"type": "KEEP", "start": start, "end": end})
             self.segments.sort(key=lambda x: x['start'])
+            
+            # Merge overlapping or adjacent segments
+            if len(self.segments) > 1:
+                merged = []
+                current_seg = self.segments[0].copy()
+                
+                for next_seg in self.segments[1:]:
+                    if next_seg['start'] <= current_seg['end']:
+                        # Overlap found, merge by extending the end
+                        current_seg['end'] = max(current_seg['end'], next_seg['end'])
+                    else:
+                        # No overlap, push current and move to next
+                        merged.append(current_seg)
+                        current_seg = next_seg.copy()
+                merged.append(current_seg)
+                self.segments = merged
+            
             self.refresh_segment_table()
             self.temp_start = None
             self.temp_end = None
