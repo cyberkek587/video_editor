@@ -243,7 +243,7 @@ class VideoEditorApp(QMainWindow):
             self.start_mpv(files[0]["path"])
             self.current_file_index = 0
             self.status_label.setText(f"Loaded {len(files)} files. Total Duration: {self.format_time(self.timeline.total_duration)}")
-            self.visual_timeline.set_data(self.calculate_all_segments(), self.timeline.total_duration)
+            self.visual_timeline.set_data(self.calculate_all_segments(), self.timeline.total_duration, self.timeline.files)
 
     def load_all_srts(self):
         if not self.timeline.files:
@@ -251,34 +251,50 @@ class VideoEditorApp(QMainWindow):
             return
             
         folder_path = os.path.dirname(self.timeline.files[0]["path"])
-        all_subs = []
+        grouped_subs = [] # List of {"file_name": str, "subs": list}
         
         for i, file_info in enumerate(self.timeline.files):
             base_name = os.path.splitext(file_info["path"])[0]
             srt_path = base_name + ".srt"
+            file_name = os.path.basename(file_info["path"])
+            
             if os.path.exists(srt_path):
                 subs = parse_srt(srt_path)
                 offset = file_info["offset"]
                 for s in subs:
                     s['start'] += offset
                     s['end'] += offset
-                all_subs.extend(subs)
+                
+                # Keep them sorted within the file
+                subs.sort(key=lambda x: x['start'])
+                grouped_subs.append({"file_name": file_name, "subs": subs})
         
-        all_subs.sort(key=lambda x: x['start'])
-        self.populate_subtitles(all_subs)
+        self.populate_subtitles(grouped_subs)
         self.current_srt_files = [f + ".srt" for f in [os.path.splitext(fi["path"])[0] for fi in self.timeline.files] if os.path.exists(f + ".srt")]
 
-    def populate_subtitles(self, subs):
+    def populate_subtitles(self, grouped_subs):
         self.subtitle_list.clear()
-        for sub in subs:
-            timestamp = f"[{self.format_time(sub['start'])}]"
-            item = QListWidgetItem(f"{timestamp} {sub['text']}")
-            item.setData(Qt.ItemDataRole.UserRole, sub['start'])
-            self.subtitle_list.addItem(item)
+        for group in grouped_subs:
+            # Add a header for the file
+            header = QListWidgetItem(f"#{group['file_name']}")
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            header.setText(0, f"#{group['file_name']}")
+            # Make header bold
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            self.subtitle_list.addItem(header)
+            
+            for sub in group['subs']:
+                timestamp = f"[{self.format_time(sub['start'])}]"
+                item = QListWidgetItem(f"{timestamp} {sub['text']}")
+                item.setData(Qt.ItemDataRole.UserRole, sub['start'])
+                self.subtitle_list.addItem(item)
 
     def on_subtitle_clicked(self, item):
         v_time = item.data(Qt.ItemDataRole.UserRole)
-        self.seek_virtual_time(v_time)
+        if v_time is not None:
+            self.seek_virtual_time(v_time)
 
     def seek_virtual_time(self, v_time):
         idx = self.timeline.get_file_at_time(v_time)
@@ -411,7 +427,7 @@ class VideoEditorApp(QMainWindow):
                 for j in range(3):
                     self.segment_table.item(i, j).setForeground(Qt.GlobalColor.gray)
         
-        self.visual_timeline.set_data(all_segments, self.timeline.total_duration)
+        self.visual_timeline.set_data(all_segments, self.timeline.total_duration, self.timeline.files)
 
     def calculate_all_segments(self):
         if not self.segments:
