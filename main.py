@@ -6,7 +6,7 @@ import glob
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QListWidget, QListWidgetItem, QPushButton, 
                              QFileDialog, QLabel, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QProgressBar, QMessageBox)
+                             QProgressBar, QMessageBox, QSplitter, QCheckBox)
 from PyQt6.QtCore import Qt, QProcess, QTimer, QThread, pyqtSignal
 from srt_parser import parse_srt
 from mpv_ipc import MPVController
@@ -148,12 +148,12 @@ class VideoEditorApp(QMainWindow):
         # Main Vertical Layout for the whole window
         main_layout = QVBoxLayout(central_widget)
 
-        # Top Section: Horizontal layout for Navigator and Preview
-        top_layout = QHBoxLayout()
+        # Top Section: Using QSplitter for dynamic resizing
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
         # Left Panel: Subtitle Navigator
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
+        self.left_panel = QWidget()
+        left_layout = QVBoxLayout(self.left_panel)
         
         self.load_folder_btn = QPushButton("Load Folder")
         self.load_folder_btn.clicked.connect(self.open_folder)
@@ -168,15 +168,17 @@ class VideoEditorApp(QMainWindow):
         left_layout.addWidget(self.subtitle_list)
 
         # Right Panel: Preview
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        self.right_panel = QWidget()
+        right_layout = QVBoxLayout(self.right_panel)
         
         self.video_container = QWidget()
         self.video_container.setStyleSheet("background-color: black;")
         right_layout.addWidget(self.video_container)
 
-        top_layout.addWidget(left_panel, 5) # Subtitles take most of the space
-        top_layout.addWidget(right_panel, 1)  # Minimal space for the video container
+        self.splitter.addWidget(self.left_panel)
+        self.splitter.addWidget(self.right_panel)
+        self.splitter.setStretchFactor(0, 5)
+        self.splitter.setStretchFactor(1, 1)
         
         # Bottom Panel (Controls)
         bottom_panel = QWidget()
@@ -203,6 +205,10 @@ class VideoEditorApp(QMainWindow):
         self.save_segments_btn.clicked.connect(self.save_segments_to_file)
         self.load_segments_btn = QPushButton("Load Project")
         self.load_segments_btn.clicked.connect(self.load_segments_from_file)
+        
+        self.hide_preview_cb = QCheckBox("Hide Preview")
+        self.hide_preview_cb.toggled.connect(self.toggle_preview)
+        
         self.export_btn = QPushButton("Export")
         self.export_btn.clicked.connect(self.export_video)
         
@@ -212,6 +218,7 @@ class VideoEditorApp(QMainWindow):
         controls_layout.addWidget(self.clear_btn)
         controls_layout.addWidget(self.save_segments_btn)
         controls_layout.addWidget(self.load_segments_btn)
+        controls_layout.addWidget(self.hide_preview_cb)
         controls_layout.addStretch()
         controls_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(controls_layout)
@@ -229,7 +236,7 @@ class VideoEditorApp(QMainWindow):
         bottom_layout.addWidget(self.segment_table)
 
         # Assemble everything into the main vertical layout
-        main_layout.addLayout(top_layout)
+        main_layout.addWidget(self.splitter)
         main_layout.addWidget(bottom_panel)
 
     def open_folder(self):
@@ -552,6 +559,9 @@ class VideoEditorApp(QMainWindow):
         ]
         self.mpv_process = QProcess(self)
         self.mpv_process.start("mpv", cmd[1:])
+
+    def toggle_preview(self, hide):
+        self.right_panel.setVisible(not hide)
 
     def closeEvent(self, event):
         if self.mpv_process:
