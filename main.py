@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, QProcess, QTimer, QThread, pyqtSignal
 from srt_parser import parse_srt
 from mpv_ipc import MPVController
 from renderer import VideoRenderer
+from timeline_widget import VisualTimeline
 
 class TimelineManager:
     def __init__(self):
@@ -181,6 +182,11 @@ class VideoEditorApp(QMainWindow):
         self.segment_table = QTableWidget(0, 3)
         self.segment_table.setHorizontalHeaderLabels(["Type", "Start", "End"])
         self.segment_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        self.visual_timeline = VisualTimeline()
+        self.visual_timeline.timeClicked.connect(self.seek_virtual_time)
+        
+        bottom_layout.addWidget(self.visual_timeline)
         bottom_layout.addWidget(self.segment_table)
 
         # Final Layout Assembly
@@ -202,6 +208,7 @@ class VideoEditorApp(QMainWindow):
             self.start_mpv(files[0]["path"])
             self.current_file_index = 0
             self.status_label.setText(f"Loaded {len(files)} files. Total Duration: {self.format_time(self.timeline.total_duration)}")
+            self.visual_timeline.set_data(self.calculate_all_segments(), self.timeline.total_duration)
 
     def load_all_srts(self):
         if not self.timeline.files:
@@ -302,6 +309,8 @@ class VideoEditorApp(QMainWindow):
             if seg['type'] == "GAP":
                 for j in range(3):
                     self.segment_table.item(i, j).setForeground(Qt.GlobalColor.gray)
+        
+        self.visual_timeline.set_data(all_segments, self.timeline.total_duration)
 
     def calculate_all_segments(self):
         if not self.segments:
@@ -327,6 +336,12 @@ class VideoEditorApp(QMainWindow):
         start_str = self.format_time(self.temp_start) if self.temp_start is not None else "--"
         end_str = self.format_time(self.temp_end) if self.temp_end is not None else "--"
         self.status_label.setText(f"Current Position: {curr_str} | Start: {start_str} | End: {end_str}")
+        
+        if curr_time is not None:
+            # Update visual timeline with current virtual time
+            v_time = self.get_current_virtual_time()
+            if v_time is not None:
+                self.visual_timeline.set_current_time(v_time)
 
     def export_video(self):
         if not self.timeline.files:

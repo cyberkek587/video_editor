@@ -33,7 +33,7 @@ The project has evolved from a single-file editor to a folder-based editor.
 - [x] **Cross-File Rendering**: Update the rendering engine to split a single virtual segment across multiple source files.
 
 ## Future Plans
-- [ ] **Visual Timeline**: Replace the table with a graphical seek-bar.
+- [x] **Visual Timeline**: Replace the table with a graphical seek-bar.
 - [ ] **Preview Rendering**: Low-res proxy renders for GAP segments to verify speed factor.
 - [ ] **Audio Handling**: Better transition between KEEP and GAP zones.
 - [x] **UI Integration**: Embed MPV window directly into the PyQt6 layout.
