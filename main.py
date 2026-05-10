@@ -278,7 +278,7 @@ class VideoEditorApp(QMainWindow):
             # Add a header for the file
             header = QListWidgetItem(f"#{group['file_name']}")
             header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            header.setText(0, f"#{group['file_name']}")
+            
             # Make header bold
             font = header.font()
             font.setBold(True)
