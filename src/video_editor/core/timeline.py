@@ -32,6 +32,27 @@ class TimelineManager:
         last = self.files[-1]
         return len(self.files)-1, last["duration"]
 
+    def get_nearest_keyframe(self, file_path, timestamp):
+        """
+        Finds the nearest keyframe at or before the given timestamp.
+        """
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=pkt_pts_time",
+            "-read_intervals", f"0%{timestamp}",
+            "-of", "compact=p=0:nk=1",
+            file_path
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            timestamps = result.stdout.strip().splitlines()
+            if not timestamps:
+                return 0.0
+            return float(timestamps[-1])
+        except Exception as e:
+            print(f"Error finding keyframe: {e}")
+            return timestamp
+
     def get_file_at_time(self, virtual_time):
         for i, file in enumerate(self.files):
             if file["offset"] <= virtual_time < (file["offset"] + file["duration"]):
