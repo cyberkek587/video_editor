@@ -33,13 +33,13 @@
 - [x] **Safety**: Added "Dry Run" confirmation dialogs before starting long renders.
 - [x] **Stability**: Fixed MPV IPC JSON parsing and implemented `--keep-open` to prevent connection errors at video end.
 
-## Current Focus: Advanced Polish & Performance
-The core functionality for multi-file virtual editing is now stable.
+## Current Focus: Final Polish & Optimization
+The core functionality for multi-file virtual editing is now stable and feature-complete.
 
 ### Goals:
 - [ ] **Preview Rendering**: Low-res proxy renders for GAP segments to verify speed factor.
 - [ ] **Audio Handling**: Better transition (cross-fades) between KEEP and GAP zones.
-- [ ] **Dynamic Layouts**: Further refinement of the UI based on MPV window state.
+- [ ] **UI Refinement**: Further polishing of the dynamic layout.
 
 ## Future Plans
 - [ ] **Visual Timeline Enhancement**: Add ability to drag and resize segments directly on the timeline.
