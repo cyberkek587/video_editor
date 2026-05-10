@@ -63,13 +63,18 @@ class VideoRenderer:
                     # Relative speed factor based on the total virtual duration of this GAP segment
                     v_duration = v_end - v_start
                     speed_factor = max(1, math.floor(v_duration / 10.0))
-                    filter_complex = f"select='not(mod(n,{speed_factor}))',setpts={1.0/speed_factor}*PTS"
+                    
+                    # The "Magic" Timelapse Filter:
+                    # 1. select: Drops frames to create the timelapse effect
+                    # 2. setpts: Resets timestamps to be perfectly sequential (N is frame index)
+                    # 3. fps: Forces the output to the exact source frame rate
+                    fps = "30000/1001"
+                    filter_complex = f"select='not(mod(n,{speed_factor}))',setpts=N/({fps}*TB),fps={fps}"
                     
                     # Match the codec of the original file
                     codec = self.get_codec(file["path"])
                     
-                    # Use optimized settings and FORCE frame rate to match DJI (29.97)
-                    # We use -r 30000/1001 to ensure the timebase matches perfectly
+                    # Create a silent audio track that matches the resulting video length
                     cmd = [
                         "ffmpeg", "-y",
                         "-ss", str(local_start),
@@ -83,7 +88,7 @@ class VideoRenderer:
                         "-preset", "ultrafast",
                         "-crf", "28",
                         "-pix_fmt", "yuv420p",
-                        "-r", "30000/1001", 
+                        "-r", fps, 
                         "-c:a", "aac",
                         "-b:a", "192k",
                         "-ac", "2",
