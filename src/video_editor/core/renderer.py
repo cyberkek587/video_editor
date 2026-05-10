@@ -24,6 +24,23 @@ class VideoRenderer:
         except Exception:
             return "libx264"
 
+    def get_nearest_keyframe(self, file_path, timestamp):
+        """Finds the nearest keyframe at or before the given timestamp."""
+        cmd = [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=pkt_pts_time",
+            "-read_intervals", f"0%{timestamp}",
+            "-of", "compact=p=0:nk=1",
+            file_path
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            timestamps = result.stdout.strip().splitlines()
+            return float(timestamps[-1]) if timestamps else 0.0
+        except Exception as e:
+            print(f"Error finding keyframe: {e}")
+            return timestamp
+
     def render_virtual_segment(self, virtual_index, v_start, v_end, segment_type):
         results = []
         for i, file in enumerate(self.files_info):
@@ -35,16 +52,15 @@ class VideoRenderer:
                 local_start = overlap_start - f_start
                 local_end = overlap_end - f_start
                 output_file = os.path.join(self.output_dir, f"seg_{virtual_index:04d}_{i:03d}_{segment_type}.mp4")
+                
+                actual_start = local_start
                 if segment_type == "KEEP":
-                    # LOSSLESS CUTTING: 
-                    # To avoid "broken" files, we MUST start at a keyframe.
-                    # We use -ss BEFORE -i for fast seeking and then snap to the keyframe.
-                    # Note: This may shift the cut by a fraction of a second
+                    actual_start = self.get_nearest_keyframe(file["path"], local_start)
                     cmd = [
                         "ffmpeg", "-y",
-                        "-ss", str(local_start),
+                        "-ss", str(actual_start),
                         "-i", file["path"],
-                        "-to", str(local_end - local_start),
+                        "-to", str(local_end - actual_start),
                         "-c", "copy",
                         "-avoid_negative_ts", "make_zero",
                         "-map", "0:v", "-map", "0:a",
@@ -65,7 +81,7 @@ class VideoRenderer:
                     ]
                 try:
                     subprocess.run(cmd, check=True, capture_output=True)
-                    results.append(output_file)
+                    results.append((output_file, actual_start))
                 except subprocess.CalledProcessError as e:
                     print(f"Error rendering part {i}: {e.stderr.decode()}")
         return results
@@ -74,7 +90,9 @@ class VideoRenderer:
         list_file = os.path.join(self.output_dir, "list.txt")
         with open(list_file, "w") as f:
             for file in segment_files:
-                f.write(f"file '{os.path.abspath(file)}'\n")
+                # We expect tuples (path, actual_start) now
+                path = file[0] if isinstance(file, tuple) else file
+                f.write(f"file '{os.path.abspath(path)}'\n")
         cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-map", "0:v", "-map", "0:a", "-c", "copy", final_output]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
