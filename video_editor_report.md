@@ -36,4 +36,4 @@ The project has evolved from a single-file editor to a folder-based editor.
 - [ ] **Visual Timeline**: Replace the table with a graphical seek-bar.
 - [ ] **Preview Rendering**: Low-res proxy renders for GAP segments to verify speed factor.
 - [ ] **Audio Handling**: Better transition between KEEP and GAP zones.
-- [ ] **UI Integration**: Embed MPV window directly into the PyQt6 layout (instead of external window).
+- [x] **UI Integration**: Embed MPV window directly into the PyQt6 layout.

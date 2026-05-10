@@ -137,14 +137,13 @@ class VideoEditorApp(QMainWindow):
         self.subtitle_list.itemClicked.connect(self.on_subtitle_clicked)
         left_layout.addWidget(self.subtitle_list)
 
-        # Right Panel: Preview (Placeholder for now)
+        # Right Panel: Preview
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         
-        self.video_placeholder = QLabel("MPV Preview Window\n(Starts when video is loaded)")
-        self.video_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_placeholder.setStyleSheet("background-color: black; color: white;")
-        right_layout.addWidget(self.video_placeholder)
+        self.video_container = QWidget()
+        self.video_container.setStyleSheet("background-color: black;")
+        right_layout.addWidget(self.video_container)
 
         # Bottom Panel (Controls)
         bottom_panel = QWidget()
@@ -398,13 +397,13 @@ class VideoEditorApp(QMainWindow):
         if self.mpv_process:
             self.mpv_process.terminate()
         
-        # In a real app, we'd try to embed this using WID.
-        # For now, we'll just launch it externally with IPC enabled.
-        # Note: On Wayland, embedding is tricky.
+        # Embed mpv into the video_container widget
+        wid = int(self.video_container.winId())
+        
         cmd = [
             "mpv",
+            f"--wid={wid}",
             f"--input-ipc-server={self.socket_path}",
-            "--ontop", # Helpful for external window
             video_path
         ]
         self.mpv_process = QProcess(self)
