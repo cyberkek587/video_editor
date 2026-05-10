@@ -50,9 +50,15 @@ class MPVController:
                 client.connect(self.socket_path)
                 msg = json.dumps({"command": ["get_property", property_name]}) + '\n'
                 client.sendall(msg.encode('utf-8'))
-                response = client.recv(4096)
-                data = json.loads(response.decode('utf-8'))
-                return data.get('data')
+                response = client.recv(4096).decode('utf-8')
+                
+                # MPV can send multiple JSON objects separated by newlines
+                # We take the first complete JSON object
+                for line in response.splitlines():
+                    if line.strip():
+                        data = json.loads(line)
+                        return data.get('data')
+                return None
         except Exception as e:
             print(f"Error getting property from mpv: {e}")
             return None

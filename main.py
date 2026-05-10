@@ -120,8 +120,13 @@ class VideoEditorApp(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        
+        # Main Vertical Layout for the whole window
+        main_layout = QVBoxLayout(central_widget)
 
+        # Top Section: Horizontal layout for Navigator and Preview
+        top_layout = QHBoxLayout()
+        
         # Left Panel: Subtitle Navigator
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -146,6 +151,9 @@ class VideoEditorApp(QMainWindow):
         self.video_container.setStyleSheet("background-color: black;")
         right_layout.addWidget(self.video_container)
 
+        top_layout.addWidget(left_panel, 1)
+        top_layout.addWidget(right_panel, 3)
+        
         # Bottom Panel (Controls)
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
@@ -178,7 +186,7 @@ class VideoEditorApp(QMainWindow):
         controls_layout.addWidget(self.export_btn)
         bottom_layout.addLayout(controls_layout)
 
-        # Segment Table
+        # Segment Table and Visual Timeline
         self.segment_table = QTableWidget(0, 3)
         self.segment_table.setHorizontalHeaderLabels(["Type", "Start", "End"])
         self.segment_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -189,13 +197,9 @@ class VideoEditorApp(QMainWindow):
         bottom_layout.addWidget(self.visual_timeline)
         bottom_layout.addWidget(self.segment_table)
 
-        # Final Layout Assembly
-        content_layout = QVBoxLayout()
-        content_layout.addLayout(main_layout)
-        content_layout.addWidget(bottom_panel)
-        
-        main_layout.addWidget(left_panel, 1)
-        main_layout.addWidget(right_panel, 3)
+        # Assemble everything into the main vertical layout
+        main_layout.addLayout(top_layout)
+        main_layout.addWidget(bottom_panel)
 
     def open_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Video Folder")
