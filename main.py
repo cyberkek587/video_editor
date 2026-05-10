@@ -207,6 +207,7 @@ class VideoEditorApp(QMainWindow):
         self.load_segments_btn.clicked.connect(self.load_segments_from_file)
         
         self.hide_preview_cb = QCheckBox("Hide Preview")
+        self.hide_preview_cb.setChecked(True) # Default hide as requested
         self.hide_preview_cb.toggled.connect(self.toggle_preview)
         
         self.export_btn = QPushButton("Export")
