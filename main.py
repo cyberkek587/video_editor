@@ -488,24 +488,16 @@ class VideoEditorApp(QMainWindow):
         if not save_path:
             return
 
-        total_duration = self.timeline.total_duration
-        if total_duration <= 0:
-            QMessageBox.critical(self, "Error", "Could not determine video duration")
+        # We ONLY export KEEP segments now (cut off GAPs)
+        keep_segments = [s for s in self.segments]
+        
+        if not keep_segments:
+            QMessageBox.warning(self, "Error", "No keep segments defined.")
             return
 
-        all_segments = self.calculate_all_segments()
-        if all_segments:
-            last_end = all_segments[-1]['end']
-            if last_end < total_duration:
-                all_segments.append({"type": "GAP", "start": last_end, "end": total_duration})
-        elif total_duration > 0:
-            all_segments.append({"type": "GAP", "start": 0, "end": total_duration})
-
         # Dry Run / Confirmation
-        summary = f"Total segments to render: {len(all_segments)}\n"
-        keeps = sum(1 for s in all_segments if s['type'] == 'KEEP')
-        gaps = sum(1 for s in all_segments if s['type'] == 'GAP')
-        summary += f"KEEP: {keeps}, GAP: {gaps}\n\nProceed with export?"
+        summary = f"Total segments to render: {len(keep_segments)}\n"
+        summary += f"KEEP: {len(keep_segments)}, GAP: 0 (Removed)\n\nProceed with export?"
         
         reply = QMessageBox.question(self, "Confirm Export", summary, 
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -517,20 +509,22 @@ class VideoEditorApp(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
-        self.render_thread = RenderThread(self.timeline.files, all_segments, save_path)
+        # Render only the KEEP segments
+        self.render_thread = RenderThread(self.timeline.files, keep_segments, save_path)
         self.render_thread.progress.connect(self.update_render_progress)
-        self.render_thread.finished.connect(self.on_render_finished)
-        self.render_thread.start()
+        self.render_thread.finished.connect(lambda success, msg: self.on_render_finished(success, msg, save_path))
 
     def update_render_progress(self, value, text):
         self.progress_bar.setValue(value)
         self.status_label.setText(text)
 
-    def on_render_finished(self, success, message):
+    def on_render_finished(self, success, message, save_path=None):
         self.export_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.status_label.setText(message)
         if success:
+            # Generate subtitles for the new video
+            self.generate_output_srt(save_path)
             QMessageBox.information(self, "Export", message)
         else:
             QMessageBox.critical(self, "Export Failed", message)
@@ -564,12 +558,75 @@ class VideoEditorApp(QMainWindow):
     def toggle_preview(self, hide):
         self.right_panel.setVisible(not hide)
 
-    def closeEvent(self, event):
-        if self.mpv_process:
-            self.mpv_process.terminate()
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-        super().closeEvent(event)
+    def generate_output_srt(self, video_path):
+        # Base path for the new srt file
+        srt_output_path = os.path.splitext(video_path)[0] + ".srt"
+        
+        # 1. Get all subtitles loaded in the current session
+        # We need to access the original subtitles. Since we don't store the raw list
+        # we'll re-parse them using the same logic as load_all_srts
+        all_subs = []
+        for file_info in self.timeline.files:
+            base_name = os.path.splitext(file_info["path"])[0]
+            srt_path = base_name + ".srt"
+            if os.path.exists(srt_path):
+                subs = parse_srt(srt_path)
+                offset = file_info["offset"]
+                for s in subs:
+                    all_subs.append({
+                        'start': s.start.ordinal / 1000.0 + offset,
+                        'end': s.end.ordinal / 1000.0 + offset,
+                        'text': s.text.replace('\n', ' ')
+                    })
+        
+        all_subs.sort(key=lambda x: x['start'])
+        
+        # 2. Map original timestamps to new timeline
+        # New timeline only consists of KEEP segments concatenated
+        new_subs = []
+        current_virtual_offset = 0.0
+        
+        for keep in self.segments:
+            k_start = keep['start']
+            k_end = keep['end']
+            duration = k_end - k_start
+            
+            # Find subtitles that overlap with this keep segment
+            for sub in all_subs:
+                # Subtitle is inside or overlapping the keep segment
+                if sub['start'] < k_end and sub['end'] > k_start:
+                    # Clip the subtitle to the keep boundaries
+                    actual_start = max(sub['start'], k_start)
+                    actual_end = min(sub['end'], k_end)
+                    
+                    # Calculate new time relative to the output video
+                    new_start = current_virtual_offset + (actual_start - k_start)
+                    new_end = current_virtual_offset + (actual_end - k_start)
+                    
+                    new_subs.append({
+                        'start': new_start,
+                        'end': new_end,
+                        'text': sub['text']
+                    })
+            
+            current_virtual_offset += duration
+            
+        # 3. Write to SRT file
+        def format_srt_time(seconds):
+            hrs = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            secs = seconds % 60
+            return f"{hrs:02}:{mins:02}:{secs:05.2f}".replace('.', ',')
+
+        try:
+            with open(srt_output_path, "w", encoding="utf-8") as f:
+                for i, sub in enumerate(new_subs, 1):
+                    f.write(f"{i}\n")
+                    f.write(f"{format_srt_time(sub['start'])} --> {format_srt_time(sub['end'])}\n")
+                    f.write(f"{sub['text']}\n\n")
+            print(f"Successfully generated subtitles at {srt_output_path}")
+        except Exception as e:
+            print(f"Error writing SRT file: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
