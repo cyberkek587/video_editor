@@ -68,11 +68,8 @@ class VideoRenderer:
                     # Match the codec of the original file
                     codec = self.get_codec(file["path"])
                     
-                    # Use optimized settings based on user's converter config
-                    # We use 'ultrafast' preset for GAP segments to keep rendering speed high
-                    preset = "ultrafast" if codec == "libx265" else "ultrafast"
-                    
-                    # Create a silent audio track that matches the resulting video length
+                    # Use optimized settings and FORCE frame rate to match DJI (29.97)
+                    # We use -r 30000/1001 to ensure the timebase matches perfectly
                     cmd = [
                         "ffmpeg", "-y",
                         "-ss", str(local_start),
@@ -83,9 +80,10 @@ class VideoRenderer:
                         "-map", "0:v",
                         "-map", "1:a",
                         "-c:v", codec,
-                        "-preset", preset,
+                        "-preset", "ultrafast",
                         "-crf", "28",
                         "-pix_fmt", "yuv420p",
+                        "-r", "30000/1001", 
                         "-c:a", "aac",
                         "-b:a", "192k",
                         "-ac", "2",
@@ -117,6 +115,8 @@ class VideoRenderer:
             "-f", "concat",
             "-safe", "0",
             "-i", list_file,
+            "-map", "0:v", 
+            "-map", "0:a",
             "-c", "copy",
             final_output
         ]
