@@ -1,0 +1,3 @@
+file '/home/cyberkek/Documents/video_editor/temp_segments/seg_0000_000_KEEP.mp4'
+file '/home/cyberkek/Documents/video_editor/temp_segments/seg_0001_000_KEEP.mp4'
+file '/home/cyberkek/Documents/video_editor/temp_segments/seg_0002_001_KEEP.mp4'

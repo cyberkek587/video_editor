@@ -34,7 +34,8 @@ class VideoRenderer:
             file_path
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # Added timeout to prevent hanging on corrupted files
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
             timestamps = result.stdout.strip().splitlines()
             return float(timestamps[-1]) if timestamps else 0.0
         except Exception as e:
@@ -80,10 +81,13 @@ class VideoRenderer:
                         "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-movflags", "+faststart", "-shortest", output_file
                     ]
                 try:
-                    subprocess.run(cmd, check=True, capture_output=True)
+                    # Added timeout to prevent hanging on a single segment
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=300)
                     results.append((output_file, actual_start))
                 except subprocess.CalledProcessError as e:
                     print(f"Error rendering part {i}: {e.stderr.decode()}")
+                except subprocess.TimeoutExpired:
+                    print(f"Timeout rendering part {i}")
         return results
 
     def assemble_final(self, segment_files, final_output):

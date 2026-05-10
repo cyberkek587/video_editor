@@ -1,47 +1,52 @@
 # Smart-Cut Video Editor Progress Report
 
-## Completed Stages
+## Project Status: Stable Beta (Refactored)
 
-### Stage 1: Foundation (MVP)
-- [x] **GUI Layout**: Basic PyQt6 window with Left (Navigation) and Right (Preview) panels.
-- [x] **SRT Parsing**: Implementation of `srt_parser.py` using `pysrt` to extract timestamps and text.
-- [x] **MPV Integration**: IPC socket communication implemented in `mpv_ipc.py` for remote control of the video player (seek, pause, resume).
-- [x] **UI Embedding**: Integrated MPV into PyQt6 via WID (with external window fallback for Wayland).
+The project has transitioned from a single-file MVP to a professional, multi-file virtual editing tool. The architecture has been refactored into a modular package structure (`src/`) for better maintainability.
 
-### Stage 2: Selection Logic
-- [x] **Marker System**: Implementation of "Set Start" and "Set End" markers.
-- [x] **Segment Management**: Logic to handle "KEEP" (lossless) and "GAP" (timelapse) zones.
-- [x] **Automatic Merging**: Overlapping KEEP zones are automatically merged into single segments.
-- [x] **Auto-Submit**: KEEP segments are automatically added upon setting the end marker.
-- [x] **Project Persistence**: Ability to Save/Load segment lists to/from text files.
-- [x] **Timeline Table**: A visual table showing the sequence of segments with double-click removal.
-- [x] **Hotkeys**: Keyboard shortcuts (`[`, `]`, `Enter`) for rapid editing.
+## Completed Features
 
-### Stage 3: Rendering Backend
-- [x] **Lossless Export**: FFmpeg `stream copy` for KEEP segments to maintain 4K quality.
-- [x] **Optimized Timelapses**: 
-    - Frame-dropping `select` filter for GAP segments.
-    - **Codec Synchronization**: GAP segments now match the source codec (H.265/HEVC) to prevent playback crashes.
-    - **Audio Consistency**: Added silent audio tracks to GAPs to ensure seamless concatenation.
-    - **Optimized Settings**: Applied CRF 28 and `ultrafast` preset for efficient timelapse rendering.
-- [x] **Concatenation**: Automated assembly of all chunks into a single final output file.
+### 1. Core Engine & Architecture
+- [x] **Multi-File Virtual Timeline**: Supports loading folders of DJI-style videos, sorting them chronologically, and treating them as one continuous stream.
+- [x] **Lossless Rendering Pipeline**: Implemented a high-performance "Keep" strategy using FFmpeg stream copying (`-c copy`).
+- [x] **Keyframe-Aware Cutting**: Implemented "Snapping" to the nearest I-frame (Keyframe) to prevent corrupted output files and playback freezes.
+- [x] **Parallel Processing**: Integrated `ThreadPoolExecutor` to utilize multiple CPU cores during the rendering of segments, significantly increasing export speed.
+- [x] **Project Persistence**: Added the ability to save and load segment configurations via `.txt` (JSON) files.
 
-### Stage 4: Polish & UX
-- [x] **Non-blocking UI**: Rendering moved to a separate `QThread` to prevent GUI freezing.
-- [x] **Visual Feedback**: Integration of `QProgressBar` and status updates during export.
-- [x] **Visual Timeline**: Interactive graphical seek-bar for visual segment management.
-- [x] **Safety**: Added "Dry Run" confirmation dialogs before starting long renders.
-- [x] **Stability**: Fixed MPV IPC JSON parsing and implemented `--keep-open` to prevent connection errors at video end.
+### 2. UI & User Experience
+- [x] **Speech-Driven Navigation**: Subtitle-based jumping using `mpv` IPC sockets.
+- [x] **Dynamic Layout**: 
+    - Implemented `QSplitter` for adjustable panel widths.
+    - Added "Hide Preview" mode to maximize workspace for subtitle navigation.
+- [x] **Visual Timeline**: A graphical representation of KEEP/GAP zones with a real-time playback indicator.
+- [x] **Auto-Submit Workflow**: "Set End" marker automatically adds the segment to the list, streamlining the editing process.
+- [x] **Overlap Management**: Automatic merging of overlapping or adjacent KEEP segments.
 
-## Current Focus: Final Polish & Optimization
-The core functionality for multi-file virtual editing is now stable and feature-complete.
+### 3. Subtitle Integration
+- [x] **Global SRT Mapping**: Load all subtitles in a folder and offset them to match the virtual timeline.
+- [x] **Auto-Highlighting**: The subtitle list now automatically scrolls and highlights the current line being spoken in the video.
+- [x] **Export Sync**: Automatic generation of a new `.srt` file for exported videos, with timestamps re-mapped to the new, shorter timeline.
 
-### Goals:
-- [ ] **Preview Rendering**: Low-res proxy renders for GAP segments to verify speed factor.
-- [ ] **Audio Handling**: Better transition (cross-fades) between KEEP and GAP zones.
-- [ ] **UI Refinement**: Further polishing of the dynamic layout.
+## Technical Specifications (Current)
+- **Video Codec**: H.265/HEVC (Source-matched).
+- **Audio Codec**: AAC 192k Stereo.
+- **Timeline Base**: 30000/1001 FPS (Standard NTSC).
+- **Export Strategy**: Pure Lossless (KEEP segments only) to guarantee stability.
 
-## Future Plans
-- [ ] **Visual Timeline Enhancement**: Add ability to drag and resize segments directly on the timeline.
-- [ ] **Batch Export**: Support for exporting multiple project files in a queue.
-- [ ] **Audio Leveling**: Normalize audio levels across different source files in the virtual timeline.
+## Pending & Future Goals
+
+### Short-Term (Polish)
+- [ ] **Smart Cut Implementation**: Return to the "Smart Cut" approach (re-encoding only the gap between the desired cut and the nearest keyframe) to allow frame-accurate cuts without sacrificing the rest of the clip's quality.
+- [ ] **Audio Transitions**: Implement simple cross-fades or fades between concatenated segments to avoid "pops" in the audio.
+- [ ] **Visual Timeline Editing**: Allow users to drag and resize KEEP/GAP zones directly on the graphical bar.
+
+### Long-Term (Advanced)
+- [ ] **Proxy Previews**: Low-resolution proxy rendering for GAP segments to preview timelapse speed before final export.
+- [ ] **Batch Processing**: Queue multiple projects for overnight rendering.
+- [ ] **Audio Track Selection**: Support for choosing specific audio channels from multi-track recordings.
+
+## Developer Notes for Resume
+- **Entry Point**: `main.py`
+- **Logic Core**: `src/video_editor/core/`
+- **UI Components**: `src/video_editor/ui/`
+- **Current Dependencies**: `PyQt6`, `pysrt`, `mpv`, `ffmpeg`
