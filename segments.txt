@@ -1,1 +1,1 @@
-[{"type": "KEEP", "start": 0.0, "end": 143.276467}, {"type": "KEEP", "start": 2071.502767, "end": 2521.472}]
+[{"type": "KEEP", "start": 767.104, "end": 868.638767}, {"type": "KEEP", "start": 5180.185567, "end": 5629.354}]

@@ -175,8 +175,8 @@ class VideoEditorApp(QMainWindow):
         self.video_container.setStyleSheet("background-color: black;")
         right_layout.addWidget(self.video_container)
 
-        top_layout.addWidget(left_panel, 2) # Expanded subtitle block
-        top_layout.addWidget(right_panel, 4)
+        top_layout.addWidget(left_panel, 5) # Subtitles take most of the space
+        top_layout.addWidget(right_panel, 1)  # Minimal space for the video container
         
         # Bottom Panel (Controls)
         bottom_panel = QWidget()
@@ -288,13 +288,13 @@ class VideoEditorApp(QMainWindow):
             for sub in group['subs']:
                 timestamp = f"[{self.format_time(sub['start'])}]"
                 item = QListWidgetItem(f"{timestamp} {sub['text']}")
-                item.setData(Qt.ItemDataRole.UserRole, sub['start'])
+                item.setData(Qt.ItemDataRole.UserRole, {'start': sub['start'], 'end': sub['end']})
                 self.subtitle_list.addItem(item)
 
     def on_subtitle_clicked(self, item):
-        v_time = item.data(Qt.ItemDataRole.UserRole)
-        if v_time is not None:
-            self.seek_virtual_time(v_time)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, dict) and 'start' in data:
+            self.seek_virtual_time(data['start'])
 
     def seek_virtual_time(self, v_time):
         idx = self.timeline.get_file_at_time(v_time)
@@ -459,6 +459,17 @@ class VideoEditorApp(QMainWindow):
             v_time = self.get_current_virtual_time()
             if v_time is not None:
                 self.visual_timeline.set_current_time(v_time)
+                self.highlight_current_subtitle(v_time)
+
+    def highlight_current_subtitle(self, v_time):
+        for i in range(self.subtitle_list.count()):
+            item = self.subtitle_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict) and 'start' in data:
+                if data['start'] <= v_time < data['end']:
+                    self.subtitle_list.setCurrentItem(item)
+                    self.subtitle_list.scrollToItem(item)
+                    break
 
     def export_video(self):
         if not self.timeline.files:
